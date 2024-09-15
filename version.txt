@@ -1,1 +1,1 @@
-0.3 - 2024-09-15 - fix dscp logic
+0.4 - 2024-09-15 - make tls timeout infinite

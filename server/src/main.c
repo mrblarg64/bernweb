@@ -1119,7 +1119,7 @@ static inline char tlshandshake(int fd, unsigned char again)
 			return -1;
 		}
 		gnutls_certificate_server_set_request(clitable[fd].session, GNUTLS_CERT_IGNORE);
-		gnutls_handshake_set_timeout(clitable[fd].session, GNUTLS_DEFAULT_HANDSHAKE_TIMEOUT);
+		gnutls_handshake_set_timeout(clitable[fd].session, 0);
 		gnutls_transport_set_int(clitable[fd].session, fd);
 	}
 
