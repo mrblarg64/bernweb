@@ -1740,6 +1740,10 @@ openagain:
 		{
 			//todo
 		}
+		else
+		{
+			curcli->prevdscp = *((uint8_t*)&xattr[0]);
+		}
 	}
 		
 	if (parsedreq.ifmatch.tv_sec)

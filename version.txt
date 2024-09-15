@@ -1,1 +1,1 @@
-0.2 - 2024-09-15 - fix 206 content-length bug (sent file size instead of chunk size)
+0.3 - 2024-09-15 - fix dscp logic
