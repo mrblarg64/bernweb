@@ -1,1 +1,1 @@
-0.4 - 2024-09-15 - make tls timeout infinite
+0.5 - 2024-09-15 - explicitly disable tls tickets

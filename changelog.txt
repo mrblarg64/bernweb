@@ -1,3 +1,5 @@
+0.5 - 2024-09-15 - explicitly disable tls tickets
+
 0.4 - 2024-09-15 - make tls timeout infinite
 
 0.3 - 2024-09-15 - fix dscp logic

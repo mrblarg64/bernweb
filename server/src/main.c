@@ -1103,7 +1103,7 @@ static inline char tlshandshake(int fd, unsigned char again)
 
 	if (!again)
 	{
-		if (gnutls_init(&clitable[fd].session, GNUTLS_SERVER | GNUTLS_NONBLOCK))
+		if (gnutls_init(&clitable[fd].session, GNUTLS_SERVER | GNUTLS_NONBLOCK | GNUTLS_NO_TICKETS))
 		{
 			logmsgcli(&clitable[fd], "gnutls_init() failed");
 			return -2;
