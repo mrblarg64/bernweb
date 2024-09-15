@@ -1460,7 +1460,7 @@ static inline void generateheader206(struct clicon *curcli, char *lmet, char *mi
 				    utc.tm_min,
 				    utc.tm_sec,
 				    lmet,
-				    size,
+				    curcli->erange - curcli->srange,
 				    curcli->srange,
 				    curcli->erange - 1,
 				    size,
