@@ -1,3 +1,5 @@
+0.8 - 2024-09-16 - Fix 301 Logging/parsing
+
 0.7 - 2024-09-16 - Make logging request paths and query strings more accurate at the expense of parsing speed
 
 0.6 - 2024-09-16 - Fix response to HEAD method

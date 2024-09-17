@@ -1385,6 +1385,7 @@ void generatedir301(struct clicon *curcli, unsigned short fileslen, int sockfd, 
 
 	fname = __builtin_alloca(fileslen + 1);
 	__builtin_memcpy(fname, parsedreq->file, fileslen+1);
+	fname[fileslen] = 0;
 
 	clock_gettime(CLOCK_REALTIME, &curtime);
 	gmtime_r(&curtime.tv_sec, &utc);
@@ -1715,10 +1716,6 @@ openagain:
 		close(curcli->fd);
 		if (S_ISDIR(fstx.stx_mode))
 		{
-			if (s)
-			{
-				*s = 0;
-			}
 			generatedir301(curcli, fileslen, sockfd, &parsedreq);
 			return;
 		}
