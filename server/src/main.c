@@ -1491,7 +1491,7 @@ static inline void generatelmet(struct statx *fstx, char *lmet)
 	return;
 }
 
-static inline void processrequest(int sockfd, unsigned char flags)
+void processrequest(int sockfd, unsigned char flags)
 {
 	char xattr[XATTR_BUF_SIZE];
 	char *s;
@@ -1501,6 +1501,7 @@ static inline void processrequest(int sockfd, unsigned char flags)
 	unsigned short fileslen;
 	struct clicon *curcli;
 	struct statx fstx;
+	char *openme = NULL;
 	#ifndef BERNWEB_INTERNAL_DENTRY
 	ssize_t xattrretval;
 	//1234567890123456789012345678901234567890123456789012345678901234567890123456789
@@ -1652,13 +1653,22 @@ static inline void processrequest(int sockfd, unsigned char flags)
 	s = __builtin_strchr(parsedreq.file, '?');
 	if (s)
 	{
+		fileslen = s - parsedreq.file;
 		*s = 0;
 	}
 	if (__builtin_expect_with_probability(parsedreq.file[fileslen-1] == '/', 1, 0.5))
 	{
 		//12345678901
 		//index.html
-		__builtin_memcpy(&parsedreq.file[fileslen], "index.html", 11);
+		openme = __builtin_alloca(11 + fileslen);
+		__builtin_memcpy(openme, parsedreq.file, fileslen);
+		__builtin_memcpy(&openme[fileslen], "index.html", 11);
+		if (s)
+		{
+			*s = '?';
+			s = NULL;
+		}
+		
 		#ifdef BERNWEB_INTERNAL_DENTRY
 		fileslen += 10;
 		#endif
@@ -1667,7 +1677,7 @@ static inline void processrequest(int sockfd, unsigned char flags)
 	//todo
 	#else
 openagain:
-	curcli->fd = syscall(SYS_openat2, docrootfd, parsedreq.file, &oh, sizeof(struct open_how));
+	curcli->fd = syscall(SYS_openat2, docrootfd, openme ? openme: parsedreq.file, &oh, sizeof(struct open_how));
 	if (s)
 	{
 		*s = '?';
