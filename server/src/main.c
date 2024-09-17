@@ -1535,7 +1535,7 @@ static inline void processrequest(int sockfd, unsigned char flags)
 	}
 	else if (slen == 4)
 	{
-		if (!__builtin_memcmp(curcli->r, "HEAD", 4))
+		if (__builtin_memcmp(curcli->r, "HEAD", 4))
 		{
 			parsedreq.flags |= REQUEST_FLAG_GET;
 			generateerror(curcli, 405, sockfd, &parsedreq);

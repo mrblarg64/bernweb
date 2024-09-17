@@ -1,1 +1,1 @@
-0.5 - 2024-09-15 - explicitly disable tls tickets
+0.6 - 2024-09-16 - Fix response to HEAD method
