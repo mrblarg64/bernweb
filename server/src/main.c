@@ -2062,7 +2062,6 @@ void *tlsworker(void *arg)
 				}
 				if (curcli->state >= TLS_STATE_RESPONDING_HEADER_FILE)
 				{
-					gnutls_deinit(curcli->session);
 					close(curcli->fd);
 				}
 				#ifdef BERNWEB_MADV_FREE

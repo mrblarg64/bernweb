@@ -1,1 +1,1 @@
-0.11 - 2024-09-22 - Make it so you don't confuse the parser if you sent /r/r/n
+0.12 - 2024-09-22 - unfix gnutls session leak, it wasn't a leak, i'm just stupid
