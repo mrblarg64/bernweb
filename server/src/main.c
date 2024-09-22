@@ -1580,6 +1580,14 @@ void processrequest(int sockfd, unsigned char flags)
 			break;
 		}
 		slen = e-s;
+		if (slen == 1)
+		{
+			while (e[1] == '\r')
+			{
+				e++;
+			}
+			break;
+		}
 		*e = 0;
 		if (slen < 10)
 		{
