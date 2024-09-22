@@ -63,7 +63,11 @@
 #define REQUEST_FLAG_TLS 0b100000
 
 #define NEW_NOFILE_NUM 548576
+#ifndef DEBUG
 const struct rlimit newnofile = {NEW_NOFILE_NUM, NEW_NOFILE_NUM};
+#else
+struct rlimit newnofile = {NEW_NOFILE_NUM, NEW_NOFILE_NUM};
+#endif
 const struct sigaction siga = {.sa_handler = SIG_IGN};
 struct open_how oh = {0};
 
@@ -1394,7 +1398,7 @@ void generatedir301(struct clicon *curcli, unsigned short fileslen, int sockfd, 
 	logrequest(curcli, 301, parsedreq, &curtime);
 	#endif
 
-	sretval = __builtin_sprintf(curcli->r, "HTTP/1.1 301 Moved Permanently\r\nDate: %s, %02i %s %i %02i:%02i:%02i GMT\r\nServer: bernweb\r\nLocation: %s/\r\n\r\n",
+	sretval = __builtin_sprintf(curcli->r, "HTTP/1.1 301 Moved Permanently\r\nDate: %s, %02i %s %i %02i:%02i:%02i GMT\r\nServer: bernweb\r\nLocation: %s/\r\nContent-Length: 0\r\n\r\n",
 				    daystrs[utc.tm_wday],
 				    utc.tm_mday,
 				    monthstrs[utc.tm_mon],
@@ -2050,6 +2054,7 @@ void *tlsworker(void *arg)
 				}
 				if (curcli->state >= TLS_STATE_RESPONDING_HEADER_FILE)
 				{
+					gnutls_deinit(curcli->session);
 					close(curcli->fd);
 				}
 				#ifdef BERNWEB_MADV_FREE
@@ -2356,6 +2361,18 @@ int main(int argc, char *argv[])
 		logmsg(strerror(myerrno));
 		return myerrno;
 	}
+
+	#ifdef DEBUG
+	newnofile.rlim_cur = RLIM_INFINITY;
+	newnofile.rlim_max = RLIM_INFINITY;
+	if (setrlimit(RLIMIT_CORE, &newnofile))
+	{
+		myerrno = errno;
+		logmsg("failed to setrlimit()");
+		logmsg(strerror(myerrno));
+		return myerrno;
+	}
+	#endif
 
 	if (setgroups(0, NULL) != 0)
 	{
