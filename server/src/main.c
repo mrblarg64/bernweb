@@ -1582,11 +1582,8 @@ void processrequest(int sockfd, unsigned char flags)
 		slen = e-s;
 		if (slen == 1)
 		{
-			while (e[1] == '\r')
-			{
-				e++;
-			}
-			break;
+			generateerror(curcli, 400, sockfd, &parsedreq);
+			return;
 		}
 		*e = 0;
 		if (slen < 10)
