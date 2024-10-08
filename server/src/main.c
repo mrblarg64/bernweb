@@ -1569,19 +1569,35 @@ void processrequest(int sockfd, unsigned char flags)
 	//guaranteeed to find something because the string is guaranteed
 	//to end in /r/n/r/n by isrequestcomplete()
 	//and is null terminated by recv() logic
+	//2024-10-07 BUT THE EVIL USERS CAN SEND NULL CHARACTERS
+	//FUUUUUCK
 	s = e + 1;
 	e = __builtin_strchr(s, '\r');
+	if (!e)
+	{
+		generateerror(curcli, 400, sockfd, &parsedreq);
+		return;
+	}
 	while (1)
 	{
 		s = e + 2;
 		e = __builtin_strchr(s, '\r');
 		if (e == s)
 		{
+			//rnrn
 			break;
+		}
+		if (!e)
+		{
+			//rogue null char in request
+			generateerror(curcli, 400, sockfd, &parsedreq);
+			return;
 		}
 		slen = e-s;
 		if (slen == 1)
 		{
+			//probably a rogue carriage return
+			//rrnrn
 			generateerror(curcli, 400, sockfd, &parsedreq);
 			return;
 		}
