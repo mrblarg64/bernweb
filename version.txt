@@ -1,1 +1,1 @@
-0.14 - 2024-10-07 - send 400 to clients that send a rogue /0
+0.15 - 2024-10-20 - fix if connection lost at key moments file system file descriptors may remain open

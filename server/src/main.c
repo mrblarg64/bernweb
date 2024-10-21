@@ -1732,8 +1732,8 @@ openagain:
 
 	if (statx(curcli->fd, "", AT_EMPTY_PATH, STATX_MODE | STATX_MTIME | STATX_SIZE, &fstx))
 	{
-		generateerror(curcli, 500, sockfd, &parsedreq);
 		close(curcli->fd);
+		generateerror(curcli, 500, sockfd, &parsedreq);
 		return;
 	}
 	if (!(S_ISREG(fstx.stx_mode)))
@@ -1758,7 +1758,6 @@ openagain:
 			return;
 		}
 		generateerror(curcli, 500, sockfd, &parsedreq);
-		close(curcli->fd);
 		return;
 	}
 	xattr[xattrretval] = 0;
@@ -1784,9 +1783,9 @@ openagain:
 		{
 			if ((parsedreq.ifmatch.tv_sec == fstx.stx_mtime.tv_sec) && (parsedreq.ifmatch.tv_usec == fstx.stx_mtime.tv_nsec))
 			{
+				close(curcli->fd);
 				parsedreq.flags &= (~REQUEST_FLAG_GET);
 				generateerror(curcli, 304, sockfd, &parsedreq);
-				close(curcli->fd);
 				return;
 			}
 		}
@@ -1794,9 +1793,9 @@ openagain:
 		{
 			if (!((parsedreq.ifmatch.tv_sec == fstx.stx_mtime.tv_sec) && (parsedreq.ifmatch.tv_usec == fstx.stx_mtime.tv_nsec)))
 			{
+				close(curcli->fd);
 				parsedreq.flags &= (~REQUEST_FLAG_GET);
 				generateerror(curcli, 412, sockfd, &parsedreq);
-				close(curcli->fd);
 				return;
 			}
 		}
@@ -1805,8 +1804,8 @@ openagain:
 	{
 		if (parsedreq.ifmodsince == fstx.stx_mtime.tv_sec)
 		{
-			generateerror(curcli, 304, sockfd, &parsedreq);
 			close(curcli->fd);
+			generateerror(curcli, 304, sockfd, &parsedreq);
 			return;
 		}
 	}
@@ -1828,8 +1827,8 @@ openagain:
 		{
 			if (curcli->erange > fstx.stx_size)
 			{
-				generateerror(curcli, 416, sockfd, &parsedreq);
 				close(curcli->fd);
+				generateerror(curcli, 416, sockfd, &parsedreq);
 				return;
 			}
 		}
@@ -1842,8 +1841,8 @@ openagain:
 		{
 			if (((size_t)curcli->srange) >= (fstx.stx_size-1))
 			{
-				generateerror(curcli, 416, sockfd, &parsedreq);
 				close(curcli->fd);
+				generateerror(curcli, 416, sockfd, &parsedreq);
 				return;
 			}
 		}
@@ -1967,6 +1966,10 @@ void *httpworker(void *arg)
 						epoll_ctl(e, EPOLL_CTL_MOD, events[wretval].data.fd, &events[wretval]);
 						continue;
 					}
+					if (curcli->state >= HTTP_STATE_RESPONDING_HEADER_FILE)
+					{
+						close(curcli->fd);
+					}
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2013,6 +2016,7 @@ void *httpworker(void *arg)
 						}
 						continue;
 					}
+					close(curcli->fd);
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2180,6 +2184,10 @@ void *tlsworker(void *arg)
 						logmsgcli(curcli, gnutls_strerror_name(recvretval));
 					}
 					gnutls_deinit(curcli->session);
+					if (curcli->state >= TLS_STATE_RESPONDING_HEADER_FILE)
+					{
+						close(curcli->fd);
+					}
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2234,6 +2242,7 @@ void *tlsworker(void *arg)
 						logmsgcli(curcli, gnutls_strerror_name(recvretval));
 					}
 					gnutls_deinit(curcli->session);
+					close(curcli->fd);
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
