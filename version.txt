@@ -1,1 +1,1 @@
-0.16 - 2024-11-28 - Initial "functioning" version of internal dentry. Still blocked by gnutls bug.
+0.17 - 2024-11-28 - Fix accidently closing the file descriptors when compiled in internal dentry mode.

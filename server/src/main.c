@@ -2280,7 +2280,9 @@ openagain:
 		{
 			if ((parsedreq.ifmatch.tv_sec == CURRENT_FILE_MOD_SEC) && (parsedreq.ifmatch.tv_usec == CURRENT_FILE_MOD_NSEC))
 			{
+				#ifndef BERNWEB_INTERNAL_DENTRY
 				close(curcli->fd);
+				#endif
 				parsedreq.flags &= (~REQUEST_FLAG_GET);
 				generateerror(curcli, 304, sockfd, &parsedreq);
 				return;
@@ -2290,7 +2292,9 @@ openagain:
 		{
 			if (!((parsedreq.ifmatch.tv_sec == CURRENT_FILE_MOD_SEC) && (parsedreq.ifmatch.tv_usec == CURRENT_FILE_MOD_NSEC)))
 			{
+				#ifndef BERNWEB_INTERNAL_DENTRY
 				close(curcli->fd);
+				#endif
 				parsedreq.flags &= (~REQUEST_FLAG_GET);
 				generateerror(curcli, 412, sockfd, &parsedreq);
 				return;
@@ -2301,7 +2305,9 @@ openagain:
 	{
 		if (parsedreq.ifmodsince == CURRENT_FILE_MOD_SEC)
 		{
+			#ifndef BERNWEB_INTERNAL_DENTRY
 			close(curcli->fd);
+			#endif
 			generateerror(curcli, 304, sockfd, &parsedreq);
 			return;
 		}
@@ -2326,7 +2332,9 @@ openagain:
 		{
 			if (curcli->erange > CURRENT_FILE_SIZE)
 			{
+				#ifndef BERNWEB_INTERNAL_DENTRY
 				close(curcli->fd);
+				#endif
 				generateerror(curcli, 416, sockfd, &parsedreq);
 				return;
 			}
@@ -2340,7 +2348,9 @@ openagain:
 		{
 			if (((size_t)curcli->srange) >= (CURRENT_FILE_SIZE - 1))
 			{
+				#ifndef BERNWEB_INTERNAL_DENTRY
 				close(curcli->fd);
+				#endif
 				generateerror(curcli, 416, sockfd, &parsedreq);
 				return;
 			}

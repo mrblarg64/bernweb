@@ -1,3 +1,5 @@
+0.17 - 2024-11-28 - Fix accidently closing the file descriptors when compiled in internal dentry mode.
+
 0.16 - 2024-11-28 - Initial "functioning" version of internal dentry. Still blocked by gnutls bug.
 
 0.15 - 2024-10-20 - fix if connection lost at key moments file system file descriptors may remain open
