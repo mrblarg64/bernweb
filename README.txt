@@ -12,7 +12,8 @@ Operating modes (chosen at buildtime):
  Unix dentry:
   Call openat2(), fgetxattr(), and statx() to get file information.
   Can serve changing (i.e. growing, added) files
- Internal Dentry (incomplete, (based on my ftb server code (ftb server not publicly available))):
+  Shrinking files will break it!
+ Internal Dentry
   CANNOT SERVE CHANGING FILES
   At startup an internal data structure is created with all valid files in the documentroot.
   A single file descriptor is held open for each valid file.

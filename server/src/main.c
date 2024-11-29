@@ -23,7 +23,10 @@
 #include <pwd.h>
 #include <grp.h>
 
+//#define BERNWEB_MADV_FREE
 #define BERNWEB_LOG_REQUESTS
+
+//#define BERNWEB_INTERNAL_DENTRY
 
 #ifdef BERNWEB_INTERNAL_DENTRY
 #error "unfinished due to https://gitlab.com/gnutls/gnutls/-/issues/1580"
@@ -31,6 +34,8 @@
 
 #ifdef BERNWEB_INTERNAL_DENTRY
 #include <dirent.h>
+#define BERNWEB_MAX_PATH 1024
+#define DENT_BUF_SIZE 512
 #endif
 
 #include <limits.h>
@@ -53,6 +58,10 @@
 //255 for mime
 //1 for dscp
 #define XATTR_BUF_SIZE 256
+#ifdef BERNWEB_INTERNAL_DENTRY
+char curdentpath[BERNWEB_MAX_PATH] = {0};
+char curdentxattr[XATTR_BUF_SIZE];
+#endif
 
 #define REQUEST_FLAG_GET 0b1
 #define REQUEST_FLAG_IF_RANGE_ETAG 0b10
@@ -61,6 +70,22 @@
 #define REQUEST_FLAG_ERANGE 0b10000
 #define REQUEST_FLAG_RANGE_MASK (REQUEST_FLAG_SRANGE | REQUEST_FLAG_ERANGE)
 #define REQUEST_FLAG_TLS 0b100000
+
+#ifdef BERNWEB_INTERNAL_DENTRY
+#define CURRENT_FILE_DSCP (*((uint8_t*)&curdent->xattr[0]))
+#define CURRENT_FILE_MOD_SEC curdent->mtsec
+#define CURRENT_FILE_MOD_NSEC curdent->mtnsec
+#define CURRENT_FILE_LMET curdent->lmet
+#define CURRENT_FILE_MIME (&curdent->xattr[1])
+#define CURRENT_FILE_SIZE curdent->size
+#else
+#define CURRENT_FILE_DSCP (*((uint8_t*)&xattr[0]))
+#define CURRENT_FILE_MOD_SEC fstx.stx_mtime.tv_sec
+#define CURRENT_FILE_MOD_NSEC fstx.stx_mtime.tv_nsec
+#define CURRENT_FILE_LMET lmet
+#define CURRENT_FILE_MIME (&xattr[1])
+#define CURRENT_FILE_SIZE fstx.stx_size
+#endif
 
 #define NEW_NOFILE_NUM 548576
 #ifndef DEBUG
@@ -184,7 +209,6 @@ struct clicon
 	char r[REQUEST_SIZE];
 };
 
-//#define BERNWEB_MADV_FREE
 
 struct request
 {
@@ -198,6 +222,52 @@ struct request
 };
 
 struct request phonyreq = {.flags = REQUEST_FLAG_GET};
+
+#ifdef BERNWEB_INTERNAL_DENTRY
+struct initdent
+{
+	struct initdent *l;
+	struct initdent *r;
+	int fd;
+	struct statx fstx;
+	char xbuf[XATTR_BUF_SIZE];
+	char path[];
+};
+
+struct initslendent
+{
+	struct initslendent *l;
+	struct initslendent *r;
+	unsigned slen;
+	unsigned count;
+	struct initdent *rootdent;
+};
+
+struct dent
+{
+	int fd;
+	uint64_t size;
+	int64_t mtsec;
+	uint32_t mtnsec;
+	char xattr[XATTR_BUF_SIZE];
+	//1234567890123456789012345678901234567890123456789012345678901234567890123456789
+	//Last-Modified: Mon, 10 Jan 2024 10:10:10 GMTrnETag: "123456789012345678901234"
+	char lmet[79];
+	char path[];
+};
+
+struct slendent
+{
+	unsigned slen;
+	unsigned count;
+	struct dent *rootdent;
+};
+
+unsigned islendentcount = 0;
+struct initslendent *islendent = NULL;
+unsigned recindex;//recursive index
+struct slendent *sdents = NULL;
+#endif
 
 ///////////////////////////////////////////////////////////////
 //request
@@ -336,12 +406,189 @@ static inline short processdscp(const char * const s)
 	return -1;
 }
 
+static inline void logmsg(const char *msg)
+{
+	struct timespec curtime;
+	struct tm tmcurtime;
+
+	clock_gettime(CLOCK_REALTIME, &curtime);
+	localtime_r(&curtime.tv_sec, &tmcurtime);
+
+	dprintf(logfd, "[%i-%02i-%02i %02i:%02i:%02i.%03li] - %s\n", tmcurtime.tm_year + 1900, tmcurtime.tm_mon + 1, tmcurtime.tm_mday, tmcurtime.tm_hour, tmcurtime.tm_min, tmcurtime.tm_sec, curtime.tv_nsec/1000000, msg);
+}
+
+static inline void logmsgcli(const struct clicon *const curcli, const char *const msg)
+{
+	struct timespec curtime;
+	struct tm tmcurtime;
+
+	clock_gettime(CLOCK_REALTIME, &curtime);
+	localtime_r(&curtime.tv_sec, &tmcurtime);
+
+	dprintf(logfd, "[%i-%02i-%02i %02i:%02i:%02i.%03li] - [%s] - tls - %s\n", tmcurtime.tm_year + 1900, tmcurtime.tm_mon + 1, tmcurtime.tm_mday, tmcurtime.tm_hour, tmcurtime.tm_min, tmcurtime.tm_sec, curtime.tv_nsec/1000000, curcli->clistr, msg);
+}
+
+static inline void generatelmet(struct statx *fstx, char *lmet)
+{
+	struct tm modtime;
+
+	gmtime_r(&fstx->stx_mtime.tv_sec, &modtime);
+
+	__builtin_sprintf(lmet, "Last-Modified: %s, %02i %s %i %02i:%02i:%02i GMT\r\nETag: \"%016llx%08x\"",
+			  daystrs[modtime.tm_wday],
+			  modtime.tm_mday,
+			  monthstrs[modtime.tm_mon],
+			  modtime.tm_year + 1900,
+			  modtime.tm_hour,
+			  modtime.tm_min,
+			  modtime.tm_sec,
+			  fstx->stx_mtime.tv_sec,
+			  fstx->stx_mtime.tv_nsec);
+
+	return;
+}
+
+
+
 #ifdef BERNWEB_INTERNAL_DENTRY
+static inline struct initdent *newident(size_t pslen)
+{
+	int myerrno;
+	struct initdent *retval;
+
+	//+1 for null
+	retval = malloc(sizeof(struct initdent) + pslen + 1);
+	if (!retval)
+	{
+		myerrno = errno;
+		logmsg("failed malloc()");
+		logmsg(strerror(myerrno));
+		exit(myerrno);
+	}
+	retval->l = NULL;
+	retval->r = NULL;
+	return retval;
+}
+
+static inline struct initslendent *newislendent(size_t n)
+{
+	int myerrno;
+	struct initslendent *retval;
+
+	islendentcount++;
+	retval = malloc(sizeof(struct initslendent));
+	if (!retval)
+	{
+		myerrno = errno;
+		logmsg("failed malloc()");
+		logmsg(strerror(myerrno));
+		exit(myerrno);
+	}
+	retval->l = NULL;
+	retval->r = NULL;
+	retval->slen = n;
+	retval->count = 1;
+	retval->rootdent = newident(n);
+	return retval;
+}
+
+static inline struct initdent *addident(int fd)
+{
+	struct initslendent *cislendent;
+	struct initdent *cident;
+	int cmpretval;
+	size_t pslen;
+
+	pslen = __builtin_strlen(curdentpath);
+	if (islendent)
+	{
+		cislendent = islendent;
+		while (1)
+		{
+			if (pslen == cislendent->slen)
+			{
+				//found
+				//YOU BETTTER NOT FUCKING MAKE A
+				//CYCLE OF LINKS OR SOME SHIT
+				//OR THIS MIGHT FUCKING BREAK!!!!
+				//CAN'T HAVE 2 FILES WITH THE SAME PATH
+				cislendent->count++;
+				cident = cislendent->rootdent;
+				while (1)
+				{
+					cmpretval = __builtin_strcmp(curdentpath, cident->path);
+					if (cmpretval < 0)
+					{
+						if (cident->l)
+						{
+							cident = cident->l;
+							continue;
+						}
+						cident->l = newident(pslen);
+						cident = cident->l;
+						break;
+					}
+					if (cident->r)
+					{
+						cident = cident->r;
+						continue;
+					}
+					cident->r = newident(pslen);
+					cident = cident->r;
+					break;
+				}
+				break;
+			}
+			if (pslen < cislendent->slen)
+			{
+				if (cislendent->l)
+				{
+					cislendent = cislendent->l;
+					continue;
+				}
+				cislendent->l = newislendent(pslen);
+				cident = cislendent->l->rootdent;
+				break;
+			}
+			if (cislendent->r)
+			{
+				cislendent = cislendent->r;
+				continue;
+			}
+			cislendent->r = newislendent(pslen);
+			cident = cislendent->r->rootdent;
+			break;
+		}
+	}
+	else
+	{
+		islendent = newislendent(pslen);
+		cident = islendent->rootdent;
+	}
+	
+	cident->fd = fd;
+	__builtin_memcpy(cident->xbuf, curdentxattr, XATTR_BUF_SIZE);
+	__builtin_memcpy(cident->path, curdentpath, pslen+1);
+
+	return cident;
+}
+
 void dentryrecursor(int dirfd)
 {
+	ssize_t dentretval;
+	ssize_t xattrretval;
+	int myerrno;
+	char dents[DENT_BUF_SIZE];
+	unsigned curdentpos;
+	struct dirent64 *curdent;
+	int fd;
+	unsigned short pathpos;
+	struct initdent *addedident;
+
+	pathpos = __builtin_strlen(curdentpath);
 	while (1)
 	{
-		dentretval = getdents64(fd, dents, DENT_BUF_SIZE);
+		dentretval = getdents64(dirfd, dents, DENT_BUF_SIZE);
 		if (dentretval == -1)
 		{
 			myerrno = errno;
@@ -350,7 +597,7 @@ void dentryrecursor(int dirfd)
 		}
 		if (dentretval == 0)
 		{
-			return 0;
+			return;
 		}
 		curdentpos = 0;
 		while (curdentpos != dentretval)
@@ -358,63 +605,343 @@ void dentryrecursor(int dirfd)
 			curdent = (struct dirent64*)&dents[curdentpos];
 			if (curdent->d_type == DT_REG)
 			{
-				__builtin_strcpy(&relpath[pathpos+1], curdent->d_name);
-				*prevnext = malloc(sizeof(transqentry));
-				if (!prevnext)
+				__builtin_strcpy(&curdentpath[pathpos], curdent->d_name);
+				fd = syscall(SYS_openat2, docrootfd, curdentpath, &oh, sizeof(struct open_how));
+				if (fd == -1)
 				{
-					
+					myerrno = errno;
+					logmsg("failed to open a file:");
+					logmsg(curdent->d_name);
+					logmsg(strerror(myerrno));
+					//exit(myerrno);
+					curdentpos += curdent->d_reclen;
+					continue;
 				}
-				/* curtv->type = FTB_TYPE_FILE; */
-				/* if (my_send_waitall(session, curtv, sizeof(struct ftblstv)) != sizeof(struct ftblstv)) */
-				/* { */
-				/* 	goto lstvrecursorfailure; */
-				/* } */
-				/* if (sendstringretcode(curdent->d_name, session)) */
-				/* { */
-				/* 	goto lstvrecursorfailure; */
-				/* } */
+				xattrretval = fgetxattr(fd, BERNWEB_XATTR_KEY, curdentxattr, XATTR_BUF_SIZE);
+				if (xattrretval == -1)
+				{
+					close(fd);
+					if (errno != ENODATA)
+					{
+						myerrno = errno;
+						logmsg("failed to fgetxattr() a file");
+						logmsg(strerror(myerrno));
+						exit(myerrno);
+					}
+					curdentpos += curdent->d_reclen;
+					continue;	
+				}
+				curdentxattr[xattrretval] = 0;
+				if (!curdentxattr[0])
+				{
+					*((uint8_t*)&curdentxattr[0]) = defaultdscp;
+				}
+				//curdentpath is global
+				if (!__builtin_strcmp(curdent->d_name, "index.html"))
+				{
+					curdentpath[pathpos] = 0;
+				}
+				addedident = addident(fd);
+				if (statx(fd, "", AT_EMPTY_PATH, STATX_MODE | STATX_MTIME | STATX_SIZE, &addedident->fstx))
+				{
+					myerrno = errno;
+					logmsg("failed to statx()");
+					logmsg(strerror(myerrno));
+					exit(myerrno);
+				}
 			}
 			else if ((curdent->d_type == DT_DIR)&&(curdent->d_name[0] != '.'))
 			{
-				dirfd = openat(fd, curdent->d_name, O_RDONLY | O_DIRECTORY);
-				if (dirfd == -1)
+				fd = openat(dirfd, curdent->d_name, O_RDONLY | O_DIRECTORY);
+				if (fd == -1)
 				{
-					goto lstvrecursorfailure;
 					myerrno = errno;
-					perror("lstvrecursor() dirfd failed openat()");
-					exit(myerrno);
+					logmsg("failed to open a directory");
+					logmsg(curdent->d_name);
+					logmsg(strerror(myerrno));
+					curdentpos += curdent->d_reclen;
+					continue;
 				}
-				/* curtv->type = FTB_TYPE_DIRECTORY; */
-				/* if (my_send_waitall(session, curtv, sizeof(struct ftblstv)) != sizeof(struct ftblstv)) */
-				/* { */
-				/* 	goto lstvrecursorfailure; */
-				/* } */
-				/* if (sendstringretcode(curdent->d_name, session)) */
-				/* { */
-				/* 	goto lstvrecursorfailure; */
-				/* } */
-				/* if (__builtin_add_overflow(curtv->depth, 1, &curtv->depth)) */
-				/* { */
-				/* 	curtv->depth--; */
-				/* 	goto lstvrecursorfailure; */
-				/* } */
-				retval = lstvrecursor(dirfd, curtv, cliinfo, session);
-				/* curtv->depth--; */
-				if (retval)
-				{
-					goto lstvrecursorfailure;
-				}
-				close(dirfd);
-				dirfd = -1;
+				__builtin_strcpy(&curdentpath[pathpos], curdent->d_name);
+				__builtin_strcat(&curdentpath[pathpos], "/");
+			        dentryrecursor(fd);
+				close(fd);
 			}
 			curdentpos += curdent->d_reclen;
 		}
 	}
 }
 
-static inline void generatedentry()
+void sortinitslendents(struct initslendent *c, struct initslendent *r[])
 {
+	if (c->l)
+	{
+		sortinitslendents(c->l, r);
+	}
+
+	r[recindex] = c;
+	recindex++;
+
+	if (c->r)
+	{
+		sortinitslendents(c->r, r);
+	}
+	return;
+}
+
+void sortinitdents(struct initdent *c, struct initdent *r[])
+{
+	if (c->l)
+	{
+		sortinitdents(c->l, r);
+	}
+
+	r[recindex] = c;
+	recindex++;
+
+	if (c->r)
+	{
+		sortinitdents(c->r, r);
+	}
+	return;
+}
+
+static inline unsigned insertslendent(unsigned slen)
+{
+	unsigned pos = 0;
+
+	while (1)
+	{
+		if (!(sdents[pos].slen))
+		{
+			sdents[pos].slen = slen;
+			return pos;
+		}
+		if (slen < sdents[pos].slen)
+		{
+			pos = ((pos << 1) + 1);
+			continue;
+		}
+		pos = ((pos << 1) + 2);
+	}
+}
+
+static inline void insertdent(struct initdent *i, struct dent *o, unsigned slen)
+{
+	unsigned pos = 0;
+	unsigned size;
+	struct dent *out;
+
+	//+1 for null
+	size = sizeof(struct dent) + slen + 1;
+	out = o;
+
+
+	while (1)
+	{
+		if (!out->fd)
+		{
+			out->fd = i->fd;
+			out->size = i->fstx.stx_size;
+			out->mtsec = i->fstx.stx_mtime.tv_sec;
+			out->mtnsec = i->fstx.stx_mtime.tv_nsec;
+			__builtin_memcpy(out->xattr, i->xbuf, XATTR_BUF_SIZE);
+			generatelmet(&i->fstx, out->lmet);
+			//+1 for null
+			__builtin_memcpy(out->path, i->path, slen + 1);
+			return;
+		}
+		if (__builtin_memcmp(i->path, out->path, slen) < 0)
+		{
+			//go left
+			pos = ((pos << 1) + 1);
+			out = (struct dent *)(((char *)o) + (size * pos));
+			continue;
+		}
+		//go right
+		pos = ((pos << 1) + 2);
+		out = (struct dent *)(((char *)o) + (size * pos));
+	}
+}
+
+void assembledents(struct initdent *sorted[], unsigned size, unsigned pos)
+{
+	unsigned lsize;//also the middle index
+	unsigned rsize;
+
+	lsize = (size >> 1);
+	rsize = (size >> 1) - (!(size & 0b1));
+
+	insertdent(sorted[lsize], sdents[pos].rootdent, sdents[pos].slen);//sorted[lsize],
+
+	if (lsize)
+	{
+		assembledents(&sorted[0], lsize, pos);
+	}
+	if (rsize)
+	{
+		assembledents(&sorted[lsize+1], rsize, pos);
+	}
+}
+
+void dodents(struct initslendent *i, unsigned pos)
+{
+	struct initdent **sortedidents;
+	unsigned x;
+	int myerrno;
+
+	sortedidents = malloc(i->count * sizeof(struct initdent *));
+	if (!sortedidents)
+	{
+		myerrno = errno;
+		logmsg("failed calloc()");
+		logmsg(strerror(myerrno));
+		exit(myerrno);
+	}
+
+	recindex = 0;
+	sortinitdents(i->rootdent, sortedidents);
+
+	//+1 for null
+	sdents[pos].rootdent = calloc(i->count, sizeof(struct dent) + i->slen + 1);
+	if (!sdents[pos].rootdent)
+	{
+		myerrno = errno;
+		logmsg("failed calloc()");
+		logmsg(strerror(myerrno));
+		exit(myerrno);
+	}
+
+	assembledents(sortedidents, i->count, pos);
+
+	x=0;
+	while (x != i->count)
+	{
+		free(sortedidents[x]);
+		x++;
+	}
+
+	free(i);
+}
+
+void assembleslendents(struct initslendent *sorted[], unsigned size)
+{
+	unsigned lsize;//also the middle index
+	unsigned rsize;
+	unsigned pos;
+
+	lsize = (size >> 1);
+	rsize = (size >> 1) - (!(size & 0b1));
+
+	pos = insertslendent(sorted[lsize]->slen);
+	sdents[pos].count = sorted[lsize]->count;
+	//this will free sorted[lsize]!!!!
+	dodents(sorted[lsize], pos);
+
+	if (lsize)
+	{
+		assembleslendents(&sorted[0], lsize);
+	}
+	if (rsize)
+	{
+		assembleslendents(&sorted[lsize+1], rsize);
+	}
+}
+
+static inline void generatedentries()
+{
+	int myerrno;
+
+	struct initslendent **sortedinitslendents;
+	//make the init dentries
+	curdentpath[0] = '/';
 	dentryrecursor(docrootfd);
+	close(docrootfd);
+
+	//convert the init dentries
+	//to ballanced tree
+	sortedinitslendents = malloc(islendentcount * sizeof(struct initslendent *));
+	if (!sortedinitslendents)
+	{
+		myerrno = errno;
+		logmsg("failed malloc()");
+		logmsg(strerror(myerrno));
+		exit(myerrno);
+	}
+
+	recindex = 0;
+	sortinitslendents(islendent, sortedinitslendents);
+
+	sdents = calloc(islendentcount, sizeof(struct slendent));
+	if (!sdents)
+	{
+		myerrno = errno;
+		logmsg("failed calloc()");
+		logmsg(strerror(myerrno));
+		exit(myerrno);
+	}
+
+	//both of these will free everything!!!
+	assembleslendents(sortedinitslendents, islendentcount);
+	free(sortedinitslendents);
+}
+
+static inline struct dent *finddent(unsigned short slen, char *file)
+{
+	unsigned size;
+	unsigned pos = 0;
+	unsigned dpos = 0;
+	struct dent *retval;
+	int cmpretval;
+
+	while (1)
+	{
+		if (sdents[pos].slen == slen)
+		{
+			break;
+		}
+
+		if (slen < sdents[pos].slen)
+		{
+			pos = ((pos << 1) + 1);
+		}
+		else
+		{
+			pos = ((pos << 1) + 2);
+		}
+
+		if (pos > islendentcount)
+		{
+			return NULL;
+		}
+	}
+
+	//+1 for null
+	size = sizeof(struct dent) + slen + 1;
+	retval = sdents[pos].rootdent;
+	while (1)
+	{
+		cmpretval = __builtin_memcmp(file , retval->path, slen);
+		if (!cmpretval)
+		{
+			return retval;
+		}
+		if (cmpretval < 0)
+		{
+			dpos = ((dpos << 1) + 1);
+		}
+		else
+		{
+			dpos = ((dpos << 1) + 2);
+		}
+
+		if (dpos > sdents[pos].count)
+		{
+			return NULL;
+		}
+
+		retval = (struct dent *)(((char *)sdents[pos].rootdent) + (size * pos));
+	}
 }
 #endif
 
@@ -447,27 +974,6 @@ static inline void getclistring(struct sockaddr_storage *s, char *clistring)
         return;
 }
 
-static inline void logmsg(const char *msg)
-{
-	struct timespec curtime;
-	struct tm tmcurtime;
-
-	clock_gettime(CLOCK_REALTIME, &curtime);
-	localtime_r(&curtime.tv_sec, &tmcurtime);
-
-	dprintf(logfd, "[%i-%02i-%02i %02i:%02i:%02i.%03li] - %s\n", tmcurtime.tm_year + 1900, tmcurtime.tm_mon + 1, tmcurtime.tm_mday, tmcurtime.tm_hour, tmcurtime.tm_min, tmcurtime.tm_sec, curtime.tv_nsec/1000000, msg);
-}
-
-static inline void logmsgcli(const struct clicon *const curcli, const char *const msg)
-{
-	struct timespec curtime;
-	struct tm tmcurtime;
-
-	clock_gettime(CLOCK_REALTIME, &curtime);
-	localtime_r(&curtime.tv_sec, &tmcurtime);
-
-	dprintf(logfd, "[%i-%02i-%02i %02i:%02i:%02i.%03li] - [%s] - tls - %s\n", tmcurtime.tm_year + 1900, tmcurtime.tm_mon + 1, tmcurtime.tm_mday, tmcurtime.tm_hour, tmcurtime.tm_min, tmcurtime.tm_sec, curtime.tv_nsec/1000000, curcli->clistr, msg);
-}
 
 static inline void logrequest(const struct clicon *const curcli, unsigned short rcode, const struct request *const parsedreq, struct timespec *curtime)
 {
@@ -1476,38 +1982,20 @@ static inline void generateheader206(struct clicon *curcli, char *lmet, char *mi
 	curcli->state = HTTP_STATE_RESPONDING_HEADER_FILE;
 }
 
-static inline void generatelmet(struct statx *fstx, char *lmet)
-{
-	struct tm modtime;
-
-	gmtime_r(&fstx->stx_mtime.tv_sec, &modtime);
-
-	__builtin_sprintf(lmet, "Last-Modified: %s, %02i %s %i %02i:%02i:%02i GMT\r\nETag: \"%016llx%08x\"",
-			  daystrs[modtime.tm_wday],
-			  modtime.tm_mday,
-			  monthstrs[modtime.tm_mon],
-			  modtime.tm_year + 1900,
-			  modtime.tm_hour,
-			  modtime.tm_min,
-			  modtime.tm_sec,
-			  fstx->stx_mtime.tv_sec,
-			  fstx->stx_mtime.tv_nsec);
-
-	return;
-}
-
 void processrequest(int sockfd, unsigned char flags)
 {
-	char xattr[XATTR_BUF_SIZE];
 	char *s;
 	char *e;
 	struct request parsedreq = {0};
 	unsigned short slen;
 	unsigned short fileslen;
 	struct clicon *curcli;
-	struct statx fstx;
+	#ifdef BERNWEB_INTERNAL_DENTRY
+	struct dent *curdent;
+	#else
 	char *openme = NULL;
-	#ifndef BERNWEB_INTERNAL_DENTRY
+	char xattr[XATTR_BUF_SIZE];
+	struct statx fstx;
 	ssize_t xattrretval;
 	//1234567890123456789012345678901234567890123456789012345678901234567890123456789
 	//Last-Modified: Mon, 10 Jan 2024 10:10:10 GMTrnETag: "123456789012345678901234"
@@ -1682,6 +2170,20 @@ void processrequest(int sockfd, unsigned char flags)
 		fileslen = s - parsedreq.file;
 		*s = 0;
 	}
+	#ifdef BERNWEB_INTERNAL_DENTRY
+	curdent = finddent(fileslen, parsedreq.file);
+	if (s)
+	{
+		*s = '?';
+		s = NULL;
+	}
+	if (!curdent)
+	{
+		generateerror(curcli, 404, sockfd, &parsedreq);
+		return;
+	}
+	curcli->fd = curdent->fd;
+	#else
 	if (__builtin_expect_with_probability(parsedreq.file[fileslen-1] == '/', 1, 0.5))
 	{
 		//12345678901
@@ -1694,14 +2196,7 @@ void processrequest(int sockfd, unsigned char flags)
 			*s = '?';
 			s = NULL;
 		}
-		
-		#ifdef BERNWEB_INTERNAL_DENTRY
-		fileslen += 10;
-		#endif
 	}
-	#ifdef BERNWEB_INTERNAL_DENTRY
-	//todo
-	#else
 openagain:
 	curcli->fd = syscall(SYS_openat2, docrootfd, openme ? openme: parsedreq.file, &oh, sizeof(struct open_how));
 	if (s)
@@ -1763,17 +2258,19 @@ openagain:
 	xattr[xattrretval] = 0;
 	if (!xattr[0])
 	{
-		*((uint8_t*)&xattr[0]) = defaultdscp;
+		CURRENT_FILE_DSCP = defaultdscp;
 	}
-	if (*((uint8_t*)&xattr[0]) != curcli->prevdscp)
+
+	#endif
+	if (CURRENT_FILE_DSCP != curcli->prevdscp)
 	{
-		if (setsockopt(sockfd, IPPROTO_IP, IP_TOS, &xattr[0], sizeof(char)) == -1)
+		if (setsockopt(sockfd, IPPROTO_IP, IP_TOS, &CURRENT_FILE_DSCP, sizeof(char)) == -1)
 		{
 			//todo
 		}
 		else
 		{
-			curcli->prevdscp = *((uint8_t*)&xattr[0]);
+			curcli->prevdscp = CURRENT_FILE_DSCP;
 		}
 	}
 		
@@ -1781,7 +2278,7 @@ openagain:
 	{
 		if (parsedreq.flags & REQUEST_FLAG_IF_NONE_MATCH)
 		{
-			if ((parsedreq.ifmatch.tv_sec == fstx.stx_mtime.tv_sec) && (parsedreq.ifmatch.tv_usec == fstx.stx_mtime.tv_nsec))
+			if ((parsedreq.ifmatch.tv_sec == CURRENT_FILE_MOD_SEC) && (parsedreq.ifmatch.tv_usec == CURRENT_FILE_MOD_NSEC))
 			{
 				close(curcli->fd);
 				parsedreq.flags &= (~REQUEST_FLAG_GET);
@@ -1791,7 +2288,7 @@ openagain:
 		}
 		else
 		{
-			if (!((parsedreq.ifmatch.tv_sec == fstx.stx_mtime.tv_sec) && (parsedreq.ifmatch.tv_usec == fstx.stx_mtime.tv_nsec)))
+			if (!((parsedreq.ifmatch.tv_sec == CURRENT_FILE_MOD_SEC) && (parsedreq.ifmatch.tv_usec == CURRENT_FILE_MOD_NSEC)))
 			{
 				close(curcli->fd);
 				parsedreq.flags &= (~REQUEST_FLAG_GET);
@@ -1802,7 +2299,7 @@ openagain:
 	}
 	else if (parsedreq.ifmodsince)
 	{
-		if (parsedreq.ifmodsince == fstx.stx_mtime.tv_sec)
+		if (parsedreq.ifmodsince == CURRENT_FILE_MOD_SEC)
 		{
 			close(curcli->fd);
 			generateerror(curcli, 304, sockfd, &parsedreq);
@@ -1810,22 +2307,24 @@ openagain:
 		}
 	}
 
+	#ifndef BERNWEB_INTERNAL_DENTRY
 	generatelmet(&fstx, lmet);
+	#endif
 
 	if ((parsedreq.flags & REQUEST_FLAG_RANGE_MASK) && (parsedreq.flags & REQUEST_FLAG_GET))
 	{
 		if (parsedreq.ifrange.tv_sec)
 		{
-			if (!((parsedreq.ifrange.tv_sec == fstx.stx_mtime.tv_sec) && ((!(parsedreq.flags & REQUEST_FLAG_IF_RANGE_ETAG)) || (parsedreq.ifrange.tv_usec == fstx.stx_mtime.tv_nsec))))
+			if (!((parsedreq.ifrange.tv_sec == CURRENT_FILE_MOD_SEC) && ((!(parsedreq.flags & REQUEST_FLAG_IF_RANGE_ETAG)) || (parsedreq.ifrange.tv_usec == CURRENT_FILE_MOD_NSEC))))
 			{
 				curcli->srange = 0;
-				curcli->erange = fstx.stx_size;
-				generateheader200(curcli, lmet, &xattr[1], &parsedreq);
+				curcli->erange = CURRENT_FILE_SIZE;
+				generateheader200(curcli, CURRENT_FILE_LMET, CURRENT_FILE_MIME, &parsedreq);
 			}
 		}
 		if (parsedreq.flags & REQUEST_FLAG_ERANGE)// && ) || ( && ))
 		{
-			if (curcli->erange > fstx.stx_size)
+			if (curcli->erange > CURRENT_FILE_SIZE)
 			{
 				close(curcli->fd);
 				generateerror(curcli, 416, sockfd, &parsedreq);
@@ -1834,12 +2333,12 @@ openagain:
 		}
 		else
 		{
-			curcli->erange = fstx.stx_size;
+			curcli->erange = CURRENT_FILE_SIZE;
 		}
 
 		if (parsedreq.flags & REQUEST_FLAG_SRANGE)
 		{
-			if (((size_t)curcli->srange) >= (fstx.stx_size-1))
+			if (((size_t)curcli->srange) >= (CURRENT_FILE_SIZE - 1))
 			{
 				close(curcli->fd);
 				generateerror(curcli, 416, sockfd, &parsedreq);
@@ -1850,15 +2349,14 @@ openagain:
 		{
 			curcli->srange = 0;
 		}
-		generateheader206(curcli, lmet, &xattr[1], fstx.stx_size, &parsedreq);
+		generateheader206(curcli, CURRENT_FILE_LMET, CURRENT_FILE_MIME, CURRENT_FILE_SIZE, &parsedreq);
 	}
 	else
 	{
 		curcli->srange = 0;
-		curcli->erange = fstx.stx_size;
-		generateheader200(curcli, lmet, &xattr[1], &parsedreq);
+		curcli->erange = CURRENT_FILE_SIZE;
+		generateheader200(curcli, CURRENT_FILE_LMET, CURRENT_FILE_MIME, &parsedreq);
 	}
-	#endif
 
 	return;
 }
@@ -1897,10 +2395,12 @@ void *httpworker(void *arg)
 			if (events[wretval].events & (EPOLLERR | EPOLLHUP))
 			{
 				//recv(events[wretval].data.fd, todo, sizetodo, MSG_ERR
+				#ifndef BERNWEB_INTERNAL_DENTRY
 				if (curcli->state >= HTTP_STATE_RESPONDING_HEADER_FILE)
 				{
 					close(curcli->fd);
 				}
+				#endif
 				#ifdef BERNWEB_MADV_FREE
 				madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 				#endif
@@ -1966,10 +2466,12 @@ void *httpworker(void *arg)
 						epoll_ctl(e, EPOLL_CTL_MOD, events[wretval].data.fd, &events[wretval]);
 						continue;
 					}
+					#ifndef BERNWEB_INTERNAL_DENTRY
 					if (curcli->state >= HTTP_STATE_RESPONDING_HEADER_FILE)
 					{
 						close(curcli->fd);
 					}
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2016,7 +2518,9 @@ void *httpworker(void *arg)
 						}
 						continue;
 					}
+					#ifndef BERNWEB_INTERNAL_DENTRY
 					close(curcli->fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2027,7 +2531,9 @@ void *httpworker(void *arg)
 				{
 					goto httpsendfileagain;
 				}
+				#ifndef BERNWEB_INTERNAL_DENTRY
 				close(curcli->fd);
+				#endif
 				if (events[wretval].events != EPOLLIN)
 				{
 					events[wretval].events = EPOLLIN;
@@ -2077,10 +2583,12 @@ void *tlsworker(void *arg)
 				{
 					gnutls_deinit(curcli->session);
 				}
+				#ifndef BERNWEB_INTERNAL_DENTRY
 				if (curcli->state >= TLS_STATE_RESPONDING_HEADER_FILE)
 				{
 					close(curcli->fd);
 				}
+				#endif
 				#ifdef BERNWEB_MADV_FREE
 				madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 				#endif
@@ -2103,6 +2611,9 @@ void *tlsworker(void *arg)
 					{
 						gnutls_deinit(curcli->session);
 					}
+					#ifdef BERNWEB_MADV_FREE
+					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
+					#endif
 					close(events[wretval].data.fd);
 					continue;
 				}
@@ -2184,10 +2695,12 @@ void *tlsworker(void *arg)
 						logmsgcli(curcli, gnutls_strerror_name(recvretval));
 					}
 					gnutls_deinit(curcli->session);
+					#ifndef BERNWEB_INTERNAL_DENTRY
 					if (curcli->state >= TLS_STATE_RESPONDING_HEADER_FILE)
 					{
 						close(curcli->fd);
 					}
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2242,7 +2755,9 @@ void *tlsworker(void *arg)
 						logmsgcli(curcli, gnutls_strerror_name(recvretval));
 					}
 					gnutls_deinit(curcli->session);
+					#ifndef BERNWEB_INTERNAL_DENTRY
 					close(curcli->fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2253,7 +2768,9 @@ void *tlsworker(void *arg)
 				{
 					goto tlssendfileagain;
 				}
+				#ifndef BERNWEB_INTERNAL_DENTRY
 				close(curcli->fd);
+				#endif
 				if (events[wretval].events != EPOLLIN)
 				{
 					events[wretval].events = EPOLLIN;
@@ -2436,7 +2953,7 @@ int main(int argc, char *argv[])
 	}
 
 	#ifdef BERNWEB_INTERNAL_DENTRY
-	generatedentry();
+	generatedentries();
 	#endif
 
 	epafd = epoll_create(8);
