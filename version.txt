@@ -1,1 +1,1 @@
-0.17 - 2024-11-28 - Fix accidently closing the file descriptors when compiled in internal dentry mode.
+0.18 - 2024-12-12 - Added profiling to server. Initial work on profiling decoder. Initial work on huge page support.

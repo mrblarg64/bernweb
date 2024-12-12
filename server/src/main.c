@@ -23,10 +23,40 @@
 #include <pwd.h>
 #include <grp.h>
 
+//#define BERNWEB_INTERNAL_DENTRY
 //#define BERNWEB_MADV_FREE
 #define BERNWEB_LOG_REQUESTS
+//#define BERNWEB_HUGE_PAGES
+//#define BERNWEB_PROFILING
+#define BERNWEB_PROFILING_DIR "/var/log/bernweb/profiling/"
+//12345   6789
+//http-NUM.bin
+//10+MAX_ULONG = 29
+#define BERNWEB_PROFILING_MAX_FNAME_SIZE (29 + sizeof(BERNWEB_PROFILING_DIR))
 
-//#define BERNWEB_INTERNAL_DENTRY
+#ifndef BERNWEB_PAGE_SIZE
+//define this in your CFLAGS if you need to change it
+#define BERNWEB_PAGE_SIZE 4096
+#endif
+
+
+#ifdef BERNWEB_PROFILING
+#ifndef BERNWEB_PROFILING_DIR
+#error "no profiling directory defined"
+#endif
+#endif
+
+
+#ifdef BERNWEB_HUGE_PAGES
+#ifdef BERNWEB_MADV_FREE
+#error "BERNWEB_HUGE_PAGES and BERNWEB_MADV_FREE cannot both be enabled"
+#endif
+//#define BERNWEB_MAP_FLAGS MAP_HUGETLB//(MAP_HUGETLB | MAP_HUGE_1GB)
+#define BERNWEB_MAP_FLAGS (MAP_HUGETLB | MAP_HUGE_2MB)
+#else
+#define BERNWEB_MAP_FLAGS 0
+#endif
+
 
 #ifdef BERNWEB_INTERNAL_DENTRY
 #error "unfinished due to https://gitlab.com/gnutls/gnutls/-/issues/1580"
@@ -46,14 +76,12 @@
 #include <gnutls/gnutls.h>
 
 #include <bernweb-xattr.h>
+#ifdef BERNWEB_PROFILING
+#include <bernweb-profiling.h>
+#endif
 
 #define BERNWEB_LINUX_SENDFILE_MAX 0x7ffff000
 
-//#define BERNWEB_SH_FLOCK_FILES
-#ifndef BERNWEB_PAGE_SIZE
-//define this in your CFLAGS if you need to change it
-#define BERNWEB_PAGE_SIZE 4096
-#endif
 
 //255 for mime
 //1 for dscp
@@ -87,7 +115,7 @@ char curdentxattr[XATTR_BUF_SIZE];
 #define CURRENT_FILE_SIZE fstx.stx_size
 #endif
 
-#define NEW_NOFILE_NUM 548576
+#define NEW_NOFILE_NUM 524288
 #ifndef DEBUG
 const struct rlimit newnofile = {NEW_NOFILE_NUM, NEW_NOFILE_NUM};
 #else
@@ -2371,6 +2399,47 @@ openagain:
 	return;
 }
 
+#ifdef BERNWEB_PROFILING
+static inline void plog(int fd, uint8_t type, struct sockaddr_storage *addr)
+{
+	int myerrno;
+	struct timespec t;
+	struct iovec iov[] = {{&type, sizeof(uint8_t)}, {addr, sizeof(struct sockaddr_storage)}, {&t, sizeof(struct timespec)}};
+
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	if (writev(fd, iov, 3) != sizeof(struct packet))
+	{
+		myerrno = errno;
+		logmsg("plog() writev()");
+		logmsg(strerror(myerrno));
+		exit(myerrno);
+	}
+}
+
+static inline void plogtcp(int fd, uint8_t type, struct sockaddr_storage *addr, int sockfd)
+{
+	int myerrno;
+	struct timespec t;
+	socklen_t sl = sizeof(struct tcp_info);
+	struct tcp_info tcpi;
+	struct iovec iov[] = {{&type, sizeof(uint8_t)}, {addr, sizeof(struct sockaddr_storage)}, {&t, sizeof(struct timespec)}, {&tcpi, sizeof(struct tcp_info)}};
+
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	if (getsockopt(sockfd, IPPROTO_TCP, TCP_INFO, &tcpi, &sl))
+	{
+		myerrno = errno;
+		logmsg("plogtcp() getsockopt()");
+		logmsg(strerror(myerrno));
+	}
+	if (writev(fd, iov, 4) != sizeof(struct packettcp))
+	{
+		myerrno = errno;
+		logmsg("plogtcp() writev()");
+		logmsg(strerror(myerrno));
+		exit(myerrno);
+	}
+}
+#endif
 
 void *httpworker(void *arg)
 {
@@ -2383,7 +2452,23 @@ void *httpworker(void *arg)
 	struct clicon *curcli;
 	char reqstatus;
 	off_t cursend;
+	#ifdef BERNWEB_PROFILING
+	char pf[BERNWEB_PROFILING_MAX_FNAME_SIZE];
+	int pfd;
+	#endif
 
+	#ifdef BERNWEB_PROFILING
+	__builtin_sprintf(pf, BERNWEB_PROFILING_DIR "http-%lu.bin", (((uintptr_t)arg) - ((uintptr_t)epfd))/sizeof(int));
+	pfd = open(pf, O_WRONLY | O_CREAT | O_APPEND, 0644);
+	if (pfd == -1)
+	{
+		myerrno = errno;
+		logmsg("httpworker: failed to open profiling log file");
+		logmsg(strerror(myerrno));
+		exit(myerrno);
+	}
+	plog(pfd, BERNWEB_P_STARTUP, &clitable[0].addr);
+	#endif
 	e = *((int*)arg);
 
 	while (1)
@@ -2411,6 +2496,9 @@ void *httpworker(void *arg)
 					close(curcli->fd);
 				}
 				#endif
+				#ifdef BERNWEB_PROFILING
+				plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+				#endif
 				#ifdef BERNWEB_MADV_FREE
 				madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 				#endif
@@ -2425,6 +2513,9 @@ void *httpworker(void *arg)
 				getclistring(&curcli->addr, curcli->clistr);
 				//fallthrough
 			case HTTP_STATE_RECV:
+				#ifdef BERNWEB_PROFILING
+				plog(pfd, BERNWEB_P_RECV, &curcli->addr);
+				#endif
 			httprecvagain:
 				recvretval = recv(events[wretval].data.fd, &curcli->r[curcli->reqindex], (REQUEST_SIZE - RESERVED_REQ_SIZE) - curcli->reqindex, 0);
 				if (recvretval == -1)
@@ -2433,6 +2524,9 @@ void *httpworker(void *arg)
 					{
 						continue;
 					}
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2441,6 +2535,9 @@ void *httpworker(void *arg)
 				}
 				if (!recvretval)
 				{
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2453,6 +2550,9 @@ void *httpworker(void *arg)
 				{
 					goto httprecvagain;
 				}
+				#ifdef BERNWEB_PROFILING
+				plogtcp(pfd, BERNWEB_P_PR_S, &curcli->addr, events[wretval].data.fd);
+				#endif
 				if (reqstatus < 0)
 				{
 					generateerror(curcli, 494, events[wretval].data.fd, &phonyreq);
@@ -2461,11 +2561,17 @@ void *httpworker(void *arg)
 				curcli->r[recvretval] = 0;
 				processrequest(events[wretval].data.fd, 0);
 			httpafterprocessreq:
+				#ifdef BERNWEB_PROFILING
+				plog(pfd, BERNWEB_P_PR_E, &curcli->addr);
+				#endif
 				curcli->reqindex = 0;
 				//fallthrough
 			case HTTP_STATE_RESPONDING_HEADER_ONLY:
 			case HTTP_STATE_RESPONDING_HEADER_ONLY_HUP:
 			case HTTP_STATE_RESPONDING_HEADER_FILE:
+				#ifdef BERNWEB_PROFILING
+				plog(pfd, BERNWEB_P_SEND_S, &curcli->addr);
+				#endif
 			httpsendhagain:
 				recvretval = send(events[wretval].data.fd, &curcli->r[curcli->reqindex], curcli->resphsize - curcli->reqindex, (curcli->state < HTTP_STATE_RESPONDING_HEADER_FILE) ? 0 : MSG_MORE);
 				if (recvretval == -1)
@@ -2482,6 +2588,9 @@ void *httpworker(void *arg)
 						close(curcli->fd);
 					}
 					#endif
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2495,6 +2604,9 @@ void *httpworker(void *arg)
 				}
 				if (curcli->state == HTTP_STATE_RESPONDING_HEADER_ONLY_HUP)
 				{
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2503,6 +2615,9 @@ void *httpworker(void *arg)
 				}
 				if (curcli->state != HTTP_STATE_RESPONDING_HEADER_FILE)
 				{
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_SEND_E, &curcli->addr, events[wretval].data.fd);
+					#endif
 					curcli->reqindex = 0;
 					curcli->state = HTTP_STATE_RECV;
 					break;
@@ -2531,6 +2646,9 @@ void *httpworker(void *arg)
 					#ifndef BERNWEB_INTERNAL_DENTRY
 					close(curcli->fd);
 					#endif
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2541,6 +2659,9 @@ void *httpworker(void *arg)
 				{
 					goto httpsendfileagain;
 				}
+				#ifdef BERNWEB_PROFILING
+				plogtcp(pfd, BERNWEB_P_SEND_E, &curcli->addr, events[wretval].data.fd);
+				#endif
 				#ifndef BERNWEB_INTERNAL_DENTRY
 				close(curcli->fd);
 				#endif
@@ -2567,7 +2688,23 @@ void *tlsworker(void *arg)
 	struct clicon *curcli;
 	char reqstatus;
 	off_t cursend;
+	#ifdef BERNWEB_PROFILING
+	char pf[BERNWEB_PROFILING_MAX_FNAME_SIZE];
+	int pfd;
+	#endif
 
+	#ifdef BERNWEB_PROFILING
+	__builtin_sprintf(pf, BERNWEB_PROFILING_DIR "tls-%lu.bin", (((uintptr_t)arg) - ((uintptr_t)tlsepfd))/sizeof(int));
+	pfd = open(pf, O_WRONLY | O_CREAT | O_APPEND, 0644);
+	if (pfd == -1)
+	{
+		myerrno = errno;
+		logmsg("httpworker: failed to open profiling log file");
+		logmsg(strerror(myerrno));
+		exit(myerrno);
+	}
+	plog(pfd, BERNWEB_P_STARTUP, &clitable[0].addr);
+	#endif
 	e = *((int*)arg);
 
 	while (1)
@@ -2599,6 +2736,9 @@ void *tlsworker(void *arg)
 					close(curcli->fd);
 				}
 				#endif
+				#ifdef BERNWEB_PROFILING
+				plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+				#endif
 				#ifdef BERNWEB_MADV_FREE
 				madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 				#endif
@@ -2612,6 +2752,9 @@ void *tlsworker(void *arg)
 				curcli->reqindex = 0;
 				getclistring(&curcli->addr, curcli->clistr);
 				curcli->fd = 0;
+				#ifdef BERNWEB_PROFILING
+				plog(pfd, BERNWEB_P_TLS_HS_S, &curcli->addr);
+				#endif
 				//fallthrough
 			case TLS_STATE_HANDSHAKE:
 				recvretval = tlshandshake(events[wretval].data.fd, (curcli->state == TLS_STATE_HANDSHAKE));
@@ -2621,6 +2764,9 @@ void *tlsworker(void *arg)
 					{
 						gnutls_deinit(curcli->session);
 					}
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2637,6 +2783,9 @@ void *tlsworker(void *arg)
 					curcli->state = TLS_STATE_HANDSHAKE;
 					continue;
 				}
+				#ifdef BERNWEB_PROFILING
+				plogtcp(pfd, BERNWEB_P_TLS_HS_E, &curcli->addr, events[wretval].data.fd);
+				#endif
 				//fallthrough
 			case TLS_STATE_RECV:
 			tlsrecvagain:
@@ -2652,6 +2801,9 @@ void *tlsworker(void *arg)
 						logmsgcli(curcli, gnutls_strerror_name(recvretval));
 					}
 					gnutls_deinit(curcli->session);
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2661,6 +2813,9 @@ void *tlsworker(void *arg)
 				if (!recvretval)
 				{
 					gnutls_deinit(curcli->session);
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2673,6 +2828,9 @@ void *tlsworker(void *arg)
 				{
 					goto tlsrecvagain;
 				}
+				#ifdef BERNWEB_PROFILING
+				plogtcp(pfd, BERNWEB_P_PR_S, &curcli->addr, events[wretval].data.fd);
+				#endif
 				if (reqstatus < 0)
 				{
 					generateerror(curcli, 494, events[wretval].data.fd, &phonyreq);
@@ -2681,11 +2839,17 @@ void *tlsworker(void *arg)
 				curcli->r[recvretval] = 0;
 				processrequest(events[wretval].data.fd, REQUEST_FLAG_TLS);
 			tlsafterprocessreq:
+				#ifdef BERNWEB_PROFILING
+				plog(pfd, BERNWEB_P_PR_E, &curcli->addr);
+				#endif
 				curcli->reqindex = 0;
 				//fallthrough
 			case TLS_STATE_RESPONDING_HEADER_ONLY:
 			case TLS_STATE_RESPONDING_HEADER_ONLY_HUP:
 			case TLS_STATE_RESPONDING_HEADER_FILE:
+				#ifdef BERNWEB_PROFILING
+				plog(pfd, BERNWEB_P_SEND_S, &curcli->addr);
+				#endif
 			tlssendhagain:
 				/* if (curcli->state == TLS_STATE_RESPONDING_HEADER_FILE) */
 				/* { */
@@ -2711,6 +2875,9 @@ void *tlsworker(void *arg)
 						close(curcli->fd);
 					}
 					#endif
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2726,6 +2893,9 @@ void *tlsworker(void *arg)
 				{
 					gnutls_bye(curcli->session, GNUTLS_SHUT_RDWR);
 					gnutls_deinit(curcli->session);
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2734,6 +2904,9 @@ void *tlsworker(void *arg)
 				}
 				if (curcli->state != TLS_STATE_RESPONDING_HEADER_FILE)
 				{
+					#ifdef BERNWEB_PROFILING
+					plog(pfd, BERNWEB_P_SEND_E, &curcli->addr);
+					#endif
 					curcli->reqindex = 0;
 					curcli->state = TLS_STATE_RECV;
 					break;
@@ -2768,6 +2941,9 @@ void *tlsworker(void *arg)
 					#ifndef BERNWEB_INTERNAL_DENTRY
 					close(curcli->fd);
 					#endif
+					#ifdef BERNWEB_PROFILING
+					plogtcp(pfd, BERNWEB_P_CLOSE, &curcli->addr, events[wretval].data.fd);
+					#endif
 					#ifdef BERNWEB_MADV_FREE
 					madvise(curcli, BERNWEB_PAGE_SIZE, MADV_FREE);
 					#endif
@@ -2778,6 +2954,9 @@ void *tlsworker(void *arg)
 				{
 					goto tlssendfileagain;
 				}
+				#ifdef BERNWEB_PROFILING
+				plogtcp(pfd, BERNWEB_P_SEND_E, &curcli->addr, events[wretval].data.fd);
+				#endif
 				#ifndef BERNWEB_INTERNAL_DENTRY
 				close(curcli->fd);
 				#endif
@@ -3025,7 +3204,8 @@ int main(int argc, char *argv[])
 		return myerrno;
 	}
 
-	clitable = mmap(NULL, NEW_NOFILE_NUM * sizeof(struct clicon), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	
+	clitable = mmap(NULL, NEW_NOFILE_NUM * sizeof(struct clicon), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | BERNWEB_MAP_FLAGS, -1, 0);
 	if (clitable == MAP_FAILED)
 	{
 		myerrno = errno;
