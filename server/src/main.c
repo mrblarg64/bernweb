@@ -2788,6 +2788,9 @@ void *tlsworker(void *arg)
 				#endif
 				//fallthrough
 			case TLS_STATE_RECV:
+				#ifdef BERNWEB_PROFILING
+				plog(pfd, BERNWEB_P_RECV, &curcli->addr);
+				#endif
 			tlsrecvagain:
 				recvretval = gnutls_record_recv(curcli->session, &curcli->r[curcli->reqindex], (REQUEST_SIZE - RESERVED_REQ_SIZE) - curcli->reqindex);
 				if (recvretval < 0)
@@ -2905,7 +2908,7 @@ void *tlsworker(void *arg)
 				if (curcli->state != TLS_STATE_RESPONDING_HEADER_FILE)
 				{
 					#ifdef BERNWEB_PROFILING
-					plog(pfd, BERNWEB_P_SEND_E, &curcli->addr);
+					plogtcp(pfd, BERNWEB_P_SEND_E, &curcli->addr, events[wretval].data.fd);
 					#endif
 					curcli->reqindex = 0;
 					curcli->state = TLS_STATE_RECV;
