@@ -3,7 +3,8 @@
 
 
 #include <sys/socket.h>
-#include <netinet/tcp.h>
+//#include <netinet/tcp.h>
+#include <linux/tcp.h>
 
 #include <stdint.h>
 

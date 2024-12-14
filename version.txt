@@ -1,1 +1,1 @@
-0.19 - 2024-12-12 - Fix accidently storing the wrong type of profiling packet for send end.
+0.20 - 2024-12-14 - Use the linux tcp_info structure, which is what I intended, instead of the glibc/posix one.

@@ -16,7 +16,8 @@
 #include <sys/sendfile.h>
 #include <signal.h>
 #include <netinet/ip.h>
-#include <netinet/tcp.h>
+//#include <netinet/tcp.h>
+#include <linux/tcp.h>
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <errno.h>
