@@ -28,7 +28,7 @@
 //#define BERNWEB_MADV_FREE
 #define BERNWEB_LOG_REQUESTS
 //#define BERNWEB_HUGE_PAGES
-#define BERNWEB_PROFILING
+//#define BERNWEB_PROFILING
 #define BERNWEB_PROFILING_DIR "/var/log/bernweb/profiling/"
 //12345   6789
 //http-NUM.bin
