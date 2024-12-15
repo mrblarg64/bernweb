@@ -28,7 +28,7 @@
 //#define BERNWEB_MADV_FREE
 #define BERNWEB_LOG_REQUESTS
 //#define BERNWEB_HUGE_PAGES
-//#define BERNWEB_PROFILING
+#define BERNWEB_PROFILING
 #define BERNWEB_PROFILING_DIR "/var/log/bernweb/profiling/"
 //12345   6789
 //http-NUM.bin
@@ -2523,6 +2523,7 @@ void *httpworker(void *arg)
 				{
 					if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
 					{
+						curcli->state = HTTP_STATE_RECV;
 						continue;
 					}
 					#ifdef BERNWEB_PROFILING
@@ -2798,6 +2799,7 @@ void *tlsworker(void *arg)
 				{
 					if (recvretval == GNUTLS_E_AGAIN)
 					{
+						curcli->state = TLS_STATE_RECV;
 						continue;
 					}
 					if (recvretval != GNUTLS_E_PREMATURE_TERMINATION)
