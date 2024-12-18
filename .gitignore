@@ -7,3 +7,5 @@
 server/bernweb
 web-ingest/web-ingest
 web-xattr-view/web-xattr-view
+client-stress/bernweb-client-stress
+profiling-decode/bernweb-profiling-decode

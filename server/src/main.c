@@ -461,7 +461,16 @@ static inline void generatelmet(struct statx *fstx, char *lmet)
 {
 	struct tm modtime;
 
-	gmtime_r(&fstx->stx_mtime.tv_sec, &modtime);
+	//have to cast to time_t because
+	//gcc 14+ is evil and won't compile
+	//despite previous version only
+	//considering this a warning, and
+	//the fact that it does fucking nothing
+	//(on 64-bit systems at least)
+	//on 32-bit systems big endian
+	//might get fucked but who has
+	//a 32-bit big endian system?
+	gmtime_r((time_t*)&fstx->stx_mtime.tv_sec, &modtime);
 
 	__builtin_sprintf(lmet, "Last-Modified: %s, %02i %s %i %02i:%02i:%02i GMT\r\nETag: \"%016llx%08x\"",
 			  daystrs[modtime.tm_wday],
