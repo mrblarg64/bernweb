@@ -1,1 +1,1 @@
-0.23 - 2024-12-17 - Fix compilation on gcc 14, update example config file to be more representative of what I am running.
+0.24 - 2024-12-18 - Fix binary search tree construction.

@@ -807,8 +807,18 @@ void assembledents(struct initdent *sorted[], unsigned size, unsigned pos)
 	unsigned lsize;//also the middle index
 	unsigned rsize;
 
-	lsize = (size >> 1);
-	rsize = (size >> 1) - (!(size & 0b1));
+	if (__builtin_popcount(size) == __builtin_ctz(~size))
+	{
+		//ballanced pick middle
+		lsize = size >> 1;
+		rsize = lsize;
+	}
+	else
+	{
+		//unballanced
+		lsize = (size >> 1) + (size & 0b1);
+		rsize = size - (lsize + 1);
+	}
 
 	insertdent(sorted[lsize], sdents[pos].rootdent, sdents[pos].slen);//sorted[lsize],
 
@@ -868,8 +878,18 @@ void assembleslendents(struct initslendent *sorted[], unsigned size)
 	unsigned rsize;
 	unsigned pos;
 
-	lsize = (size >> 1);
-	rsize = (size >> 1) - (!(size & 0b1));
+	if (__builtin_popcount(size) == __builtin_ctz(~size))
+	{
+		//ballanced pick middle
+		lsize = size >> 1;
+		rsize = lsize;
+	}
+	else
+	{
+		//unballanced
+		lsize = (size >> 1) + (size & 0b1);
+		rsize = size - (lsize + 1);
+	}
 
 	pos = insertslendent(sorted[lsize]->slen);
 	sdents[pos].count = sorted[lsize]->count;
