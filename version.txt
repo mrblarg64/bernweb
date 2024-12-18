@@ -1,1 +1,1 @@
-0.21 - 2024-12-14 - Fix the tlsworker not state changing to recv when finished with handshake, httpworker also no longer needlessly does pre-recv work twice.
+0.22 - 2024-12-17 - Finish profiling decode, update client stress.

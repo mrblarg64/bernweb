@@ -17,7 +17,7 @@
 
 struct sockaddr_storage srvr;
 
-#define NUM_THREADS 2
+#define NUM_THREADS 20
 
 #define BERNWEB_LINUX_SENDFILE_MAX 0x7ffff000
 #define MINIMUM_RESP_SIZE 100 //todo
@@ -34,8 +34,13 @@ const uint16_t af = 0x6166;
 const uint32_t rnrn = 0x0d0a0d0a;
 #endif
 
-//const char * const files[] = {"/", "/02-raw.zip", "/zzz/"};
-const char * const files[] = {"/", "/zzz/"};
+const char * const files[] = {"/", "/02-raw.zip", "/zzz/"};
+//const char * const files[] = {"/", "/zzz/"};
+
+static inline uint64_t deltans(struct timespec *l, struct timespec *h)
+{
+	return ((h->tv_sec * 1000000000L) + h->tv_nsec) - ((l->tv_sec * 1000000000L) + l->tv_nsec);
+}
 
 static inline unsigned isrequestcomplete(char *reqresp, unsigned respindex)
 {
@@ -94,28 +99,33 @@ void *worker(void *arg)
 	int reqlen;
 	unsigned respindex;
 	size_t fsize;
+	size_t todl;
 	size_t currecv;
-	int myerrno;
+	//int myerrno;
 	int ssopt;
 	ssize_t recvretval;
 	unsigned headend;
+	struct timespec start;
+	struct timespec end;
+	uint64_t dtns;
+	long double mbs;
 
 	(void)arg;
 
 	reqresp = mmap(NULL, BERNWEB_LINUX_SENDFILE_MAX, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 	if (reqresp == MAP_FAILED)
 	{
-		myerrno = errno;
+		//myerrno = errno;
 		perror("mmap()");
-		return myerrno;
+		return NULL;
 	}
 
 	sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (sock == -1)
 	{
-		myerrno = errno;
+		//myerrno = errno;
 		perror("socket()");
-		return myerrno;
+		return NULL;
 	}
 
 	//the kernel's broken rt_tos2priority() function will
@@ -124,16 +134,16 @@ void *worker(void *arg)
 	ssopt = IPTOS_DSCP_LE;
 	if (setsockopt(sock, IPPROTO_IP, IP_TOS, &ssopt, sizeof(int)) == -1)
 	{
-		myerrno = errno;
+		//myerrno = errno;
 		perror("setsockopt()");
-		return myerrno;
+		return NULL;
 	}
 
 	if (connect(sock, (struct sockaddr*)&srvr, sizeof(struct sockaddr_storage)) == -1)
 	{
-		myerrno = errno;
+		//myerrno = errno;
 		perror("connect()");
-		return myerrno;
+		return NULL;
 	}
 
 	while (1)
@@ -146,9 +156,9 @@ void *worker(void *arg)
 		recvretval = send(sock, reqresp, reqlen, 0);
 		if (recvretval != reqlen)
 		{
-			myerrno = errno;
+			//myerrno = errno;
 			perror("send()");
-			return myerrno;
+			return NULL;
 		}
 
 		respindex = 0;
@@ -157,9 +167,9 @@ void *worker(void *arg)
 			recvretval = recv(sock, &reqresp[respindex], 4096, 0);
 			if (recvretval <= 0)
 			{
-				myerrno = errno;
+				//myerrno = errno;
 				perror("recv()");
-				return myerrno;
+				return NULL;
 			}
 			respindex += recvretval;
 			headend = isrequestcomplete(reqresp, respindex);
@@ -170,17 +180,19 @@ void *worker(void *arg)
 			}
 		}
 
+		clock_gettime(CLOCK_MONOTONIC, &start);
 		fsize = processresponse(reqresp);
+		todl = fsize;
 
 		//printf("%'lu bytes\n", fsize);
-		if (fsize)
+		if (todl)
 		{
-			fsize -= (respindex - (headend + 1));
+			todl -= (respindex - (headend + 1));
 		}
 
-		while (fsize)
+		while (todl)
 		{
-			currecv = fsize;
+			currecv = todl;
 			if (currecv > BERNWEB_LINUX_SENDFILE_MAX)
 			{
 				currecv = BERNWEB_LINUX_SENDFILE_MAX;
@@ -188,12 +200,17 @@ void *worker(void *arg)
 
 			if (recv(sock, reqresp, currecv, MSG_WAITALL) != currecv)
 			{
-				myerrno = errno;
+				//myerrno = errno;
 				perror("recv()");
-				return myerrno;
+				return NULL;
 			}
-			fsize -= currecv;
+			todl -= currecv;
 		}
+		clock_gettime(CLOCK_MONOTONIC, &end);
+
+		dtns = deltans(&start, &end);
+		mbs = (((long double)fsize)/((long double)1000000.0L))/(((long double)dtns)/1000000000.0L);
+		printf("%s %'lu bytes %'lu.%09lus - %Lf MB/s\n", files[findex], fsize, dtns/1000000000L, dtns%1000000000L, mbs);
 		//break;
 	}
 
