@@ -806,6 +806,8 @@ void assembledents(struct initdent *sorted[], unsigned size, unsigned pos)
 {
 	unsigned lsize;//also the middle index
 	unsigned rsize;
+	unsigned max = ~(0u);
+	unsigned min;
 
 	if (__builtin_popcount(size) == __builtin_ctz(~size))
 	{
@@ -816,8 +818,15 @@ void assembledents(struct initdent *sorted[], unsigned size, unsigned pos)
 	else
 	{
 		//unballanced
-		lsize = (size >> 1) + (size & 0b1);
-		rsize = size - (lsize + 1);
+		max = ~(max << (((sizeof(unsigned) * 8) -  __builtin_clz(size>>1))));
+		min = max >> 1;
+		size --;
+		lsize = size - min;
+		if (lsize > max)
+		{
+			lsize = max;
+		}
+		rsize = size - lsize;
 	}
 
 	insertdent(sorted[lsize], sdents[pos].rootdent, sdents[pos].slen);//sorted[lsize],
@@ -877,6 +886,8 @@ void assembleslendents(struct initslendent *sorted[], unsigned size)
 	unsigned lsize;//also the middle index
 	unsigned rsize;
 	unsigned pos;
+	unsigned max = ~(0u);
+	unsigned min;
 
 	if (__builtin_popcount(size) == __builtin_ctz(~size))
 	{
@@ -887,8 +898,15 @@ void assembleslendents(struct initslendent *sorted[], unsigned size)
 	else
 	{
 		//unballanced
-		lsize = (size >> 1) + (size & 0b1);
-		rsize = size - (lsize + 1);
+		max = ~(max << (((sizeof(unsigned) * 8) -  __builtin_clz(size>>1))));
+		min = max >> 1;
+		size --;
+		lsize = size - min;
+		if (lsize > max)
+		{
+			lsize = max;
+		}
+		rsize = size - lsize;
 	}
 
 	pos = insertslendent(sorted[lsize]->slen);
@@ -998,7 +1016,7 @@ static inline struct dent *finddent(unsigned short slen, char *file)
 			return NULL;
 		}
 
-		retval = (struct dent *)(((char *)sdents[pos].rootdent) + (size * pos));
+		retval = (struct dent *)(((char *)sdents[pos].rootdent) + (size * dpos));
 	}
 }
 #endif

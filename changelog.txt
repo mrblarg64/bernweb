@@ -1,3 +1,9 @@
+0.27 - 2024-12-18 - Actually actually fix binary search tree construction.
+
+0.26 - 2024-12-18 - Actually fix binary search tree construction.
+
+0.25 - 2024-12-18 - Fix typo that broke finddent().
+
 0.24 - 2024-12-18 - Fix binary search tree construction.
 
 0.23 - 2024-12-17 - Fix compilation on gcc 14, update example config file to be more representative of what I am running.
