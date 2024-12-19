@@ -441,6 +441,7 @@ int main(int argc, char *argv[])
 	uint8_t *finram;
 	off_t curpos;
 	int curfile;
+	char *myname;
 
 	setlocale(LC_ALL, "");
 
@@ -454,7 +455,15 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-		puts("skill issue");
+		if (argc)
+		{
+			myname = argv[0];
+		}
+		else
+		{
+			myname = "Unknown";
+		}
+		printf("Usage: %s [OUTPUT_DIRECTORY] FILE_TO_ANALYZE [MORE_FILES_IF_YOU_HAVE_AN_OUTPUT_DIRECTORY [..]]\n\tRun with one argument (e.g. %s FILE) this program will print decode the profiling data and print it to\n\tstdout\n\tRun with two or more arguments (e.g %s DIRECTORY FILE_A [FILE_B]) it will create the directory DIRECTORY and store a\n\tsorted list of various paramaters along with a count of how many times they were scene.\n\tThis allows you to trivially generate a CCDF with spreadsheet software.\n", myname, myname, myname);
 		return EINVAL;
 	}
 

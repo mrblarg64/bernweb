@@ -1,1 +1,1 @@
-0.27 - 2024-12-18 - Actually actually fix binary search tree construction.
+0.28 - 2024-12-19 - Make profiling-decode print usage information when run without arguments.
