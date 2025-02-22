@@ -440,7 +440,7 @@ static inline void logmsg(const char *msg)
 	struct timespec curtime;
 	struct tm tmcurtime;
 
-	clock_gettime(CLOCK_REALTIME, &curtime);
+	clock_gettime(CLOCK_REALTIME_COARSE, &curtime);
 	localtime_r(&curtime.tv_sec, &tmcurtime);
 
 	dprintf(logfd, "[%i-%02i-%02i %02i:%02i:%02i.%03li] - %s\n", tmcurtime.tm_year + 1900, tmcurtime.tm_mon + 1, tmcurtime.tm_mday, tmcurtime.tm_hour, tmcurtime.tm_min, tmcurtime.tm_sec, curtime.tv_nsec/1000000, msg);
@@ -451,7 +451,7 @@ static inline void logmsgcli(const struct clicon *const curcli, const char *cons
 	struct timespec curtime;
 	struct tm tmcurtime;
 
-	clock_gettime(CLOCK_REALTIME, &curtime);
+	clock_gettime(CLOCK_REALTIME_COARSE, &curtime);
 	localtime_r(&curtime.tv_sec, &tmcurtime);
 
 	dprintf(logfd, "[%i-%02i-%02i %02i:%02i:%02i.%03li] - [%s] - tls - %s\n", tmcurtime.tm_year + 1900, tmcurtime.tm_mon + 1, tmcurtime.tm_mday, tmcurtime.tm_hour, tmcurtime.tm_min, tmcurtime.tm_sec, curtime.tv_nsec/1000000, curcli->clistr, msg);
@@ -1930,7 +1930,7 @@ static inline void generateerror(struct clicon *curcli, unsigned short code, int
 		curcli->prevdscp = defaultdscp;
 	}
 
-	clock_gettime(CLOCK_REALTIME, &curtime);
+	clock_gettime(CLOCK_REALTIME_COARSE, &curtime);
 
 	#ifdef BERNWEB_LOG_REQUESTS
 	logrequest(curcli, code, parsedreq, &curtime);
@@ -1973,7 +1973,7 @@ void generatedir301(struct clicon *curcli, unsigned short fileslen, int sockfd, 
 	__builtin_memcpy(fname, parsedreq->file, fileslen+1);
 	fname[fileslen] = 0;
 
-	clock_gettime(CLOCK_REALTIME, &curtime);
+	clock_gettime(CLOCK_REALTIME_COARSE, &curtime);
 	gmtime_r(&curtime.tv_sec, &utc);
 
 	#ifdef BERNWEB_LOG_REQUESTS
@@ -2001,7 +2001,7 @@ static inline void generateheader200(struct clicon *curcli,  char *lmet, char *m
 	struct tm utc;
 	int sretval;
 
-	clock_gettime(CLOCK_REALTIME, &curtime);
+	clock_gettime(CLOCK_REALTIME_COARSE, &curtime);
 	gmtime_r(&curtime.tv_sec, &utc);
 
 	#ifdef BERNWEB_LOG_REQUESTS
@@ -2031,7 +2031,7 @@ static inline void generateheader206(struct clicon *curcli, char *lmet, char *mi
 	struct tm utc;
 	int sretval;
 
-	clock_gettime(CLOCK_REALTIME, &curtime);
+	clock_gettime(CLOCK_REALTIME_COARSE, &curtime);
 	gmtime_r(&curtime.tv_sec, &utc);
 
 	#ifdef BERNWEB_LOG_REQUESTS
