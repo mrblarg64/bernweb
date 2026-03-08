@@ -1,1 +1,1 @@
-0.29 - 2025-02-21 - Switch from CLOCK_REALTIME to CLOCK_REALTIME_COARSE.
+0.30 - 2026-03-08 - Fix endian detection. Update copyright notice.

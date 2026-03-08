@@ -1,3 +1,6 @@
+//Copyright (C) 2024-2026 Brian William Denton
+//Available under the GNU GPLv3 License
+
 #define _GNU_SOURCE
 
 #include <fcntl.h>
@@ -250,7 +253,7 @@ static inline void getclistring(struct sockaddr_storage *s, char *clistring)
         if (s->ss_family == AF_INET)
         {
                 inet_ntop(AF_INET, &((struct sockaddr_in*)s)->sin_addr.s_addr, ipstring, MAX_IP_STR);
-                #ifdef __ORDER_LITTLE_ENDIAN__
+                #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
                 port = __builtin_bswap16(((struct sockaddr_in*)s)->sin_port);
                 #else
                 port = ((struct sockaddr_in*)s)->sin_port;
@@ -259,7 +262,7 @@ static inline void getclistring(struct sockaddr_storage *s, char *clistring)
         else
         {
                 inet_ntop(AF_INET6, &((struct sockaddr_in6*)s)->sin6_addr.s6_addr, ipstring, MAX_IP_STR);
-                #ifdef __ORDER_LITTLE_ENDIAN__
+                #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
                 port = __builtin_bswap16(((struct sockaddr_in6*)s)->sin6_port);
                 #else
                 port = ((struct sockaddr_in6*)s)->sin6_port;

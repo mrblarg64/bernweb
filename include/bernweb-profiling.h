@@ -1,3 +1,6 @@
+//Copyright (C) 2024-2026 Brian William Denton
+//Available under the GNU GPLv3 License
+
 #ifndef BERNWEB_PROFILING_H
 #define BERNWEB_PROFILING_H
 

@@ -1,4 +1,4 @@
-//Copyright (C) 2024 Brian William Denton
+//Copyright (C) 2024-2026 Brian William Denton
 //Available under the GNU GPLv3 License
 
 #include <unistd.h>
@@ -45,7 +45,7 @@ const char mload[] = "magic_load() failed!\n";
 const char mfile[] = "magic_file() failed!\n";
 const char done[] = "Done!\n";
 
-#ifdef __ORDER_LITTLE_ENDIAN__
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 const uint16_t cs = 0x7363;
 const uint16_t af = 0x6661;
 #else

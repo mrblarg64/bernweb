@@ -1,4 +1,4 @@
-//Copyright (C) 2024 Brian William Denton
+//Copyright (C) 2024-2026 Brian William Denton
 //Available under the GNU GPLv3 License
 
 #include <unistd.h>

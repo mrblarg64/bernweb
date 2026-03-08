@@ -1,3 +1,6 @@
+//Copyright (C) 2024-2026 Brian William Denton
+//Available under the GNU GPLv3 License
+
 #define _GNU_SOURCE
 
 #include <unistd.h>
@@ -24,7 +27,7 @@ struct sockaddr_storage srvr;
 
 const struct sigaction siga = {.sa_handler = SIG_IGN};
 
-#ifdef __ORDER_LITTLE_ENDIAN__
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 const uint16_t cs = 0x7363;
 const uint16_t af = 0x6661;
 const uint32_t rnrn = 0x0a0d0a0d;
@@ -231,7 +234,7 @@ int main(int argc, char *argv[])
 	}
 
 	((struct sockaddr_in*)&srvr)->sin_family = AF_INET;
-	#ifdef __ORDER_LITTLE_ENDIAN__
+	#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	((struct sockaddr_in*)&srvr)->sin_port = __builtin_bswap16(80);
 	#else
 	((struct sockaddr_in*)&srvr)->sin_port = 80;

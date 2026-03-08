@@ -1,4 +1,4 @@
-//Copyright (C) 2024 Brian William Denton
+//Copyright (C) 2024-2026 Brian William Denton
 //Available under the GNU GPLv3 License
 
 #define _GNU_SOURCE
@@ -23,6 +23,9 @@
 #include <errno.h>
 #include <pwd.h>
 #include <grp.h>
+
+#define BERNWEB_LISTEN_ADDRESS 0
+//#define BERNWEB_LISTEN_ADDRESS (142)|(165<<8)|(167<<16)|(151<<24)
 
 //#define BERNWEB_INTERNAL_DENTRY
 //#define BERNWEB_MADV_FREE
@@ -149,7 +152,7 @@ struct open_how oh = {0};
 int ssoptkidle = -1;
 #endif
 
-#ifdef __ORDER_LITTLE_ENDIAN__
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 const uint16_t cs = 0x7363;
 const uint16_t af = 0x6661;
 const uint32_t rnrn = 0x0a0d0a0d;
@@ -161,7 +164,7 @@ const uint32_t rnrn = 0x0d0a0d0a;
 
 const char * const daystrs[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 const char * const monthstrs[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-#ifdef __ORDER_LITTLE_ENDIAN__
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define MONTH_JAN 0x206e614a
 #define MONTH_FEB 0x20626546
 #define MONTH_MAR 0x2072614d
@@ -1030,7 +1033,7 @@ static inline void getclistring(struct sockaddr_storage *s, char *clistring)
         if (s->ss_family == AF_INET)
         {
                 inet_ntop(AF_INET, &((struct sockaddr_in*)s)->sin_addr.s_addr, ipstring, MAX_IP_STR);
-                #ifdef __ORDER_LITTLE_ENDIAN__
+                #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
                 port = __builtin_bswap16(((struct sockaddr_in*)s)->sin_port);
                 #else
                 port = ((struct sockaddr_in*)s)->sin_port;
@@ -1039,7 +1042,7 @@ static inline void getclistring(struct sockaddr_storage *s, char *clistring)
         else
         {
                 inet_ntop(AF_INET6, &((struct sockaddr_in6*)s)->sin6_addr.s6_addr, ipstring, MAX_IP_STR);
-                #ifdef __ORDER_LITTLE_ENDIAN__
+                #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
                 port = __builtin_bswap16(((struct sockaddr_in6*)s)->sin6_port);
                 #else
                 port = ((struct sockaddr_in6*)s)->sin6_port;
@@ -1486,8 +1489,8 @@ static inline void setupsocket(int *s, uint16_t port)
 	}
 
 	((struct sockaddr_in*)&listener)->sin_family = AF_INET;
-	((struct sockaddr_in*)&listener)->sin_addr.s_addr = 0;
-	#ifdef __ORDER_LITTLE_ENDIAN__
+	((struct sockaddr_in*)&listener)->sin_addr.s_addr = BERNWEB_LISTEN_ADDRESS;
+	#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	((struct sockaddr_in*)&listener)->sin_port = __builtin_bswap16(port);
 	#else
 	((struct sockaddr_in*)&listener)->sin_port = port;
